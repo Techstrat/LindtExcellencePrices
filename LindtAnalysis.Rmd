@@ -1,0 +1,198 @@
+---
+title: "Product Price Analysis"
+author: "Noelene Noone"
+date: "24/08/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+#================libraries======================================================
+library(data.table)
+library(plotly)
+library(DT)
+library(tibble)
+library(stats)
+```
+
+```{r variables}
+#================set variables ==========================================
+all_prices <- fread("all_prices")
+```
+
+## Comparative analysis
+
+What is the best retailer to buy Lindt Excellence 100 gram Chilli flavoured chocolate from ? Is there a better time per retailer to buy the chocolate ? 
+
+To get to answer we do a price comparative analysis for South African retail products containing the key words: **Lindt Excellence** and **100g**.
+
+The price data per product and retailer is sourced using the [thudler API R package](https://cran.r-project.org/web/packages/trundler/index.html).
+
+
+## Latest Prices on record for Chilli Chocolate
+
+First have a look at the current prices on record for Lindt Excellence 100g Chilli Chocolate for five South African retailers listing Lindt Excellence in their price catalogue.
+
+```{r chilliPrices}
+
+string1 <- ""
+string2 <- ""
+string3 <- "chilli"
+regExpression <- paste("(?=.*?(",string1,"))(?=.*?(",string2,"))(?=.*?(",string3,"))",sep="")
+chilliPrices <- all_prices[grepl(regExpression,all_prices$Product,ignore.case=TRUE, perl=TRUE),]
+
+latest_prices <- tibble(Retailer=character(),Product=character(),Date=character(),Price=numeric(),Discounted=numeric())
+for (i in unique(chilliPrices$Retailer)) {
+    last_price <- chilliPrices[Retailer==i] %>%  #do not assume latest price is first on the list, sort
+        arrange(desc(Date)) %>%
+        head(1)
+    latest_prices <- rbind(latest_prices,last_price)
+}
+
+```
+
+```{r priceLatestChilli}
+DT::datatable(latest_prices,rownames=FALSE, 
+              extensions = c('Buttons'),
+              options = list(order = list(3, 'asc'), #Order by price
+                             dom = 'Bfrtip',
+                             buttons = c('pageLength','copy'),
+                             pageLength = 25,
+                             lengthChange = TRUE,
+                        rowCallback = JS(
+    "function(row, data) {",
+    "var num = 'R'+data[3].toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');",
+    "$('td:eq(3)', row).html(num);",
+    "var num = 'R'+data[4].toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');",
+    "$('td:eq(4)', row).html(num);",
+    "}"
+                            )
+    ))
+
+```
+
+Makro looks like the cheapest option - but is it always the case ?
+
+
+## Prices over time for Chilli Chocolate
+
+Plotting the prices over time for the retailers, 
+
+* **Makro** gives the best price of **R43.95** for Lindt Excellence Chilli Chocolate.  Makro had a special at **R36.00** in Ferbuary, the lowest price seen this year.  
+
+* **Pick 'n Pay** priced the chocolate at **R43.99** in January and dipped for a couple of weeks in March to **R42.99** before raising the prices to equal Woolworths at **R47.99** for a short stint and raising it again to **R48.99**.
+
+* **Checkers** lists the chocolate at the most expensive price of **R49.99** on all the dates the price is available.
+
+* **Dischem** had a special in June at **R36.95**, but by mid July equaled Checkers as the most expensive at **R49.95**.
+
+* **Woolworths** has a consistent price at **R47.99**. The price on record is relatively stale with the last price recorded 13 May.
+
+```{r pricesOverTimeChilli}
+plotPrices <- chilliPrices
+setorder(plotPrices,Retailer,Date) #sort by Retailer and Date
+
+#plotPrices <- all_prices[,c("Date","Price","Retailer")] 
+plotPrices$text <- paste(plotPrices$Retailer,": ",(paste0("R", formatC(as.numeric(plotPrices$Price), format="f", digits=2, big.mark=","))), "<BR> ", plotPrices$Date, sep = "")
+
+
+pCP <- plotly::plot_ly(mode="lines",type="scatter")
+for (i in unique(plotPrices$Retailer))
+{
+ pCP <- pCP %>% plotly::add_trace(data = plotPrices[Retailer==i],
+              x= ~ Date,
+              y = ~ Price,
+              name = i,
+              text= ~ text,
+              hoverinfo = "text") 
+}
+pCP <- pCP %>%   plotly::layout(title = list(text="Prices for Lindt Excellence Chilli Chocolate per retailer over time.",font=list(size=12),x = 0.06), #heading on the left
+              yaxis = list(title = "Price in Rand"), 
+              xaxis = list(title = "Dates"), 
+              showlegend = TRUE,
+              hovermode = "compare")
+pCP <- pCP %>% plotly::config(displayModeBar = FALSE) 
+pCP
+
+```
+
+Reviewing the Chilli Choclate price reveals some pattern.  But the price reconrd is incomplete for Woolworths and Checkers and it is not clear what the price fluctuations with the other three retailers mean.  To get the full picture of the pricing pattern of these five retailers, we need to look at the average price per retailer over time accross all the flavours. 
+
+## Average prices for all flavours per Retailer
+
+The average price per retailer, givign each flavour in stock equal weight, over time accross all the flavours shows:
+
+ * **Dischem** shows a 3 month cycle with discounted prices in February/March and June/July. If the pattern continues we could expect another series of discounts in September/October.  When Dischem is not discounting the chocolate it has the highest average price of the five retailers.  So unless the chocolate is on special it is not worth buying from Dischem.
+ 
+ * **Makro** has consitently the lowest average price, not taking the Dischem specials into account.  Unless Dichem has a speical on, Marko is the best place to buy the chocolates.
+ 
+ * **Checkers** and **Pick 'n Pay** has a consitent high average price for their chocolate, outpriced at times by Dischem.
+ 
+ * **Woolworths** has a better average price than Checkers and Pick and Pay and Dischem when the chocolate is not on special.
+
+```{r pricesOverTimeAverage}
+
+plotPrices <- all_prices[,c("Date","Price","Retailer")] 
+plotPrices <- plotPrices[, ave:=lapply(.SD, mean), by=Date, .SDcols=c("Price")]
+plotPrices <- all_prices[,c("Date","Price","Retailer")] 
+plotPrices <- plotPrices[, ave:=lapply(.SD, mean), by=Date, .SDcols=c("Price")] #calcualte and add average pricecolumn
+plotPrices[,Price:=NULL] #remove price column
+plotPrices <- unique(plotPrices) #get unique row per retailer and date
+setnames(plotPrices,c("ave"),c("Price")) #rename the average column to Price
+setorder(plotPrices,Retailer,Date) #sort by Retailer and Date
+plotPrices$text <- paste(plotPrices$Retailer,": ",(paste0("R", formatC(as.numeric(plotPrices$Price), format="f", digits=2, big.mark=","))), "<BR> ", plotPrices$Date, sep = "")
+
+pAve <- plotly::plot_ly(mode="lines",type="scatter")
+for (i in unique(plotPrices$Retailer))
+{
+ pAve <- pAve %>% plotly::add_trace(data = plotPrices[Retailer==i],
+              x= ~ Date,
+              y = ~ supsmu(Date,Price)$y,  #Friedman's SuperSmoother trend line
+              name = i,
+              text= ~ text,
+              hoverinfo = "text") 
+}
+pAve <- pAve %>%   plotly::layout(title = list(text="Average Prices for Lindt Excellence 100g Chocolate per retailer over time.",font=list(size=12),x = 0.06), #heading on the left
+              yaxis = list(title = "Price in Rand"), 
+              xaxis = list(title = "Dates"), 
+              showlegend = TRUE,
+              hovermode = "compare")
+pAve <- pAve %>% plotly::config(displayModeBar = FALSE) 
+pAve
+
+```
+
+It is still possible that different flavours are better priced at different retailers.  A retailer that looks cheap on average might be expensive for a specific flavour and a retailer that looks cheap on average might be expensive for a specific flavour.
+
+## Conclusion
+
+On any given day, buy Lindt Excellence 100g chocolate from Makro.  If Marko is not accessable, buy from Woolworths.  
+
+If buying in bulk wait for the Dischem specials every 3 months.
+
+Avoid buying from Checkers or Pick 'n Pay.
+
+
+## All Lindt Excellence 100g prices on record
+
+For the record, these are the prices or record for Lindt Excellence 100g Chilli Chocolate for five South African retailers over time.
+
+```{r priceHistory}
+DT::datatable(all_prices,rownames=FALSE, 
+              extensions = c('Buttons'),
+              options = list(order = list(1, 'desc'), #Order by date
+                             dom = 'Bfrtip',
+                             buttons = c('pageLength','copy'),
+                             pageLength = 25,
+                             lengthChange = TRUE,
+                        rowCallback = JS(
+    "function(row, data) {",
+    "var num = 'R'+data[3].toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');",
+    "$('td:eq(3)', row).html(num);",
+    "var num = 'R'+data[4].toFixed(2).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');",
+    "$('td:eq(4)', row).html(num);",
+    "}"
+                            )
+    ))
+
+```
